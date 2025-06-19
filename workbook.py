@@ -44,6 +44,24 @@ def extract_attributes(xml_file: str) -> Dict[str, str]:
     
     return attributes
 
+def extract_worksheet_intersection(xml_file: str) -> Optional[str]:
+    """
+    Extract WorksheetIntersection value from workbook XML file.
+    Args:
+        xml_file: Path to the XML file
+    Returns:
+        The WorksheetIntersection value or None if not found
+    """
+    try:
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
+        ws_intx_elem = root.find(".//attribute[@name='WorksheetIntersection']/value")
+        if ws_intx_elem is not None and ws_intx_elem.text:
+            return ws_intx_elem.text.strip()
+    except Exception as e:
+        logging.warning(f"Error extracting WorksheetIntersection from {xml_file}: {e}")
+    return None
+
 def process_workbooks(workbooks_dir: str, mismatched_dimensions: set) -> pd.DataFrame:
     """
     Process all workbook XML files in the specified directory.
@@ -77,6 +95,62 @@ def process_workbooks(workbooks_dir: str, mismatched_dimensions: set) -> pd.Data
     
     return pd.DataFrame(data)
 
+def extract_worksheet_intersections(xml_file: str) -> List[Dict[str, str]]:
+    """
+    Extract all worksheet-level WorksheetIntersection values from a workbook XML file.
+    Returns a list of dicts with worksheet_name and intersection value.
+    """
+    intersections = []
+    try:
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
+        # Find all worksheet nodes
+        for ws in root.findall(".//data_model[@type='java.lang.Object']"):
+            ws_name_elem = ws.find("attribute[@name='name']/value")
+            ws_intx_elem = ws.find("attribute[@name='WorksheetIntersection']/value")
+            if ws_intx_elem is not None and ws_intx_elem.text:
+                intersections.append({
+                    "worksheet_name": ws_name_elem.text if ws_name_elem is not None else '',
+                    "WorksheetIntersection": ws_intx_elem.text.strip()
+                })
+    except Exception as e:
+        logging.warning(f"Error extracting worksheet intersections from {xml_file}: {e}")
+    return intersections
+
+def process_worksheet_intersections(workbooks_dir: str, mismatched_dimensions: set) -> pd.DataFrame:
+    """
+    Process all workbook XML files for WorksheetIntersection values (per worksheet).
+    Only include those where the intersection contains a mismatched dimension as a whole word or substring (e.g., _str_, str_, or str).
+    Returns DataFrame with xmlfilename, worksheet_name, WorksheetIntersection
+    """
+    data: List[Dict[str, str]] = []
+    try:
+        for filename in os.listdir(workbooks_dir):
+            if not filename.endswith(".xml"):
+                continue
+            xml_file = os.path.join(workbooks_dir, filename)
+            intersections = extract_worksheet_intersections(xml_file)
+            for entry in intersections:
+                ws_intx = entry["WorksheetIntersection"]
+                # Check for any mismatched dimension as substring or whole word
+                for mismatched in mismatched_dimensions:
+                    if (
+                        f"_{mismatched}_" in f"_{ws_intx}_" or
+                        ws_intx.startswith(f"{mismatched}_") or
+                        ws_intx.endswith(f"_{mismatched}") or
+                        ws_intx == mismatched
+                    ):
+                        data.append({
+                            "xmlfilename": os.path.splitext(filename)[0],
+                            "worksheet_name": entry["worksheet_name"],
+                            "WorksheetIntersection": ws_intx
+                        })
+                        break  # Only add once per intersection
+    except Exception as e:
+        logging.error(f"Error processing worksheet intersections: {e}")
+        raise
+    return pd.DataFrame(data)
+
 def main() -> Optional[pd.DataFrame]:
     """
     Main function to process workbooks and return results.
@@ -97,18 +171,34 @@ def main() -> Optional[pd.DataFrame]:
         for hier_name, data in mismatched_dims.items():
             mismatched_dimensions.update(data['file2_only'])
         
-        # Process workbooks
+        # Process workbooks (Wizard dims)
         df = process_workbooks("workbooks", mismatched_dimensions)
         
-        if not df.empty:
-            df = df[["xmlfilename", "CLNDDim", "LOCDim", "PRODDim"]]
-            df.to_excel("output.xlsx", sheet_name="workbook", index=False)
-            logging.info(f"Found {len(df)} workbooks with mismatched dimensions")
-            return df
+        # Process worksheet intersections (always include all, with match status)
+        df_ws = process_worksheet_intersections("workbooks", mismatched_dimensions)
+        
+        with pd.ExcelWriter("output.xlsx") as writer:
+            if not df.empty:
+                df = df[["xmlfilename", "CLNDDim", "LOCDim", "PRODDim"]]
+                df.to_excel(writer, sheet_name="workbook", index=False)
+                logging.info(f"Found {len(df)} workbooks with mismatched dimensions")
+            else:
+                logging.info("No matching dimensions found in workbooks")
+            # Always write worksheetintersection sheet
+            if not df_ws.empty:
+                df_ws = df_ws[["xmlfilename", "worksheet_name", "WorksheetIntersection"]]
+                df_ws.to_excel(writer, sheet_name="worksheetintersection", index=False)
+                logging.info(f"Found {len(df_ws)} worksheet intersections with mismatched dimensions")
+            else:
+                pd.DataFrame(columns=["xmlfilename", "worksheet_name", "WorksheetIntersection"]).to_excel(writer, sheet_name="worksheetintersection", index=False)
+                logging.info("No WorksheetIntersection values found in workbooks")
+        # Return both DataFrames for reference (optional)
+        if not df.empty or not df_ws.empty:
+            return df if not df.empty else df_ws
         else:
-            logging.info("No matching dimensions found in workbooks")
+            logging.info("No matching dimensions or WorksheetIntersection found in workbooks. No Excel file created.")
             return None
-            
+        
     except Exception as e:
         logging.error(f"Error in main execution: {e}")
         raise

@@ -1,5 +1,5 @@
 import xml.etree.ElementTree as ET
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 import logging
 import pprint
 import openpyxl
@@ -70,22 +70,59 @@ def read_ga_hierarchy_from_file(file_path: str = 'ga_hierarchy.txt') -> Dict[str
                 hierarchies[hier_name] = dimensions
     return hierarchies
 
-def find_main_spine(paths: List[List[str]], ga_list: List[str]) -> (List[str], int):
-    if not ga_list:
-        return [], 0
+def ordered_alignment_table(ga_list: List[str], customer_path: List[str]) -> Tuple[List[Tuple[str, str, str]], List[str], List[str]]:
+    """
+    Aligns GA and customer path in order, matching each GA dimension to the next available customer dimension.
+    Returns:
+        - List of (GA, Customer, Match) tuples for the table
+        - List of unmatched GA dimensions
+        - List of unmatched customer dimensions
+    """
+    table = []
+    ga_idx = 0
+    cust_idx = 0
+    matched_cust_indices = set()
+    unmatched_ga = []
+    unmatched_cust = []
+    # For each GA dimension, find the next matching customer dimension
+    while ga_idx < len(ga_list):
+        ga_dim = ga_list[ga_idx]
+        found = False
+        for i in range(cust_idx, len(customer_path)):
+            if customer_path[i].lower() == ga_dim.lower():
+                table.append((ga_dim, customer_path[i], '✓'))
+                matched_cust_indices.add(i)
+                cust_idx = i + 1
+                found = True
+                break
+        if not found:
+            table.append((ga_dim, '', '✗'))
+            unmatched_ga.append(ga_dim)
+        ga_idx += 1
+    # Any customer dimensions not matched are extra
+    for i, dim in enumerate(customer_path):
+        if i not in matched_cust_indices:
+            unmatched_cust.append(dim)
+    return table, unmatched_ga, unmatched_cust
+
+def find_main_spine(paths: List[List[str]], ga_list: List[str]) -> Tuple[List[str], int]:
+    """
+    Find the path with the most matches to the GA list (main spine), using ordered matching.
+    Returns (main_spine, match_count)
+    If no matches, returns the first path as the main spine (if any).
+    """
     best_path = []
     best_score = 0
-    ga_set = set([x.lower() for x in ga_list])
-    first_ga = ga_list[0].lower()
     for path in paths:
-        if not path:
-            continue
-        if path[0].lower() != first_ga:
-            continue  # Only consider paths that start with the first GA dimension
-        score = sum(1 for x in path if x and x.lower() in ga_set)
+        table, _, _ = ordered_alignment_table(ga_list, path)
+        score = sum(1 for _, _, match in table if match == '✓')
         if score > best_score:
             best_score = score
             best_path = path
+    # If no matches, return the first path if available
+    if not best_path and paths:
+        best_path = paths[0]
+        best_score = 0
     return best_path, best_score
 
 def extract_user_defined_and_virthier(tree: Dict[str, Any], user_dims=None, virthiers=None):
@@ -156,15 +193,13 @@ def write_excel_output(hierarchies_data, labeled_intersections, filename='hierar
         ws.cell(row=row, column=1, value='Level').font = Font(bold=True)
         ws.cell(row=row, column=2, value='GA').font = Font(bold=True)
         ws.cell(row=row, column=3, value='Customer').font = Font(bold=True)
-        ws.cell(row=row, column=4, value='Spine').font = Font(bold=True)
-        ws.cell(row=row, column=5, value='Matches').font = Font(bold=True)
+        ws.cell(row=row, column=4, value='Matches').font = Font(bold=True)
         row += 1
-        for i, (ga, cust, spine, match) in enumerate(data['level_comparison'], 1):
+        for i, (ga, cust, match) in enumerate(data['level_comparison'], 1):
             ws.cell(row=row, column=1, value=i)
             ws.cell(row=row, column=2, value=ga)
             ws.cell(row=row, column=3, value=cust)
-            ws.cell(row=row, column=4, value=spine)
-            ws.cell(row=row, column=5, value=match)
+            ws.cell(row=row, column=4, value=match)
             row += 1
         row += 1
         # 2. Summary Table
@@ -209,6 +244,7 @@ def write_excel_output(hierarchies_data, labeled_intersections, filename='hierar
         ws_intx.cell(row=i, column=1, value=k)
         ws_intx.cell(row=i, column=2, value=v)
     wb.save(filename)
+    wb.close()
 
 def output_hierarchy_analysis(xml_file: str, ga_hierarchies: Dict[str, List[str]]):
     hier_trees = extract_hierarchy_trees(xml_file)
@@ -235,12 +271,10 @@ def output_hierarchy_analysis(xml_file: str, ga_hierarchies: Dict[str, List[str]
         print(f"Virtual hierarchy: {', '.join(virthiers) if virthiers else 'None'}")
         # Prepare Excel data
         # Level Comparison Table
-        level_comparison = []
-        for i in range(max(len(ga_list), len(main_spine))):
-            ga_dim = ga_list[i] if i < len(ga_list) else ''
-            cust_dim = main_spine[i] if i < len(main_spine) else ''
-            match = '✓' if ga_dim and cust_dim and ga_dim.lower() == cust_dim.lower() else '✗'
-            level_comparison.append((ga_dim, cust_dim, cust_dim, match))
+        level_comparison, unmatched_ga, unmatched_cust = ordered_alignment_table(ga_list, main_spine)
+        # Add extra unmatched customer dimensions as extra rows
+        for dim in unmatched_cust:
+            level_comparison.append(('', dim, '✗'))
         # Position Table
         position_table = []
         for i, dim in enumerate(main_spine):
@@ -287,7 +321,8 @@ def get_file2_only_dimensions(xml_file: str, ga_file: str) -> dict:
         main_spine, _ = find_main_spine(all_paths, ga_list)
         # file2_only: in customer (main spine) but not in GA
         file2_only = [dim for dim in main_spine if dim.lower() not in [g.lower() for g in ga_list]]
-        result[hier_name] = file2_only
+        level_comparison, unmatched_ga, unmatched_cust = ordered_alignment_table(ga_list, main_spine)
+        result[hier_name] = unmatched_cust
     return result
 
 def get_mismatched_dimensions(xml_file: str, ga_file: str) -> dict:
@@ -314,7 +349,8 @@ def get_mismatched_dimensions(xml_file: str, ga_file: str) -> dict:
         file2_only = [dim for dim in main_spine if dim.lower() not in [g.lower() for g in ga_list]]
         # ga_only: in GA but not in customer (main spine)
         ga_only = [dim for dim in ga_list if dim.lower() not in [c.lower() for c in main_spine]]
-        result[hier_name] = {'ga_only': ga_only, 'file2_only': file2_only}
+        level_comparison, unmatched_ga, unmatched_cust = ordered_alignment_table(ga_list, main_spine)
+        result[hier_name] = {'ga_only': unmatched_ga, 'file2_only': unmatched_cust}
     return result
 
 if __name__ == "__main__":
@@ -331,5 +367,5 @@ if __name__ == "__main__":
     print("\nmismatched dimensions for each hierarchy:")
     for hier, dims in mismatched_dims.items():
         print(f"  {hier}:")
-        for sub_hier, sub_dims in dims.items():
-            print(f"    {sub_hier}: {', '.join(sub_dims) if sub_dims else 'None'}") 
+        print(f"    ga_only: {dims['ga_only']}")
+        print(f"    file2_only: {dims['file2_only']}") 

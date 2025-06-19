@@ -11,8 +11,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # Constants
 INVALID_VALUES = {'Scalar', '#MP_OUT#', 'user', 'system'}
 REQUIRED_FIELDS = [
-    'measure_name', 'measure_label', 'description', 'baseint', 
-    'database', 'creator', 'clearint', 'loadint', 'defagg', 
+    'measure_name', 'baseint', 
+    'database', 'clearint', 'loadint', 'defagg', 
     'defspread', 'filename', 'sharedfactname', 'loadagg', 
     'sharedfactbaseintx'
 ]
@@ -31,7 +31,7 @@ def is_valid_dimension_value(value: str) -> bool:
 
 def check_dimension_in_fields(measure_data: Dict[str, str], file2_only_dimensions: Set[str]) -> bool:
     """
-    Check if any file2_only dimension appears in baseint, loadint, or clearint fields.
+    Check if any file2_only dimension appears in baseint, loadint, or clearint fields using substring/underscore/whole-word logic.
     
     Args:
         measure_data: Dictionary containing measure data
@@ -44,9 +44,15 @@ def check_dimension_in_fields(measure_data: Dict[str, str], file2_only_dimension
         field_value = measure_data.get(field, '')
         if field_value and is_valid_dimension_value(field_value):
             dimensions = [dim.strip().lower() for dim in field_value.split(',')]
-            if any(any(file2_dim.lower() in dimension for file2_dim in file2_only_dimensions) 
-                  for dimension in dimensions):
-                return True
+            for dim_str in dimensions:
+                for file2_dim in file2_only_dimensions:
+                    if (
+                        f"_{file2_dim}_" in f"_{dim_str}_" or
+                        dim_str.startswith(f"{file2_dim}_") or
+                        dim_str.endswith(f"_{file2_dim}") or
+                        dim_str == file2_dim
+                    ):
+                        return True
     return False
 
 def extract_measure_data(data_model: ET.Element) -> Optional[Dict[str, str]]:
@@ -80,11 +86,8 @@ def extract_measure_data(data_model: ET.Element) -> Optional[Dict[str, str]]:
         # Add all required fields with default empty string
         measure_data.update({
             'measure_name': measure_name,
-            'measure_label': measure_data.get('label', ''),
-            'description': measure_data.get('description', ''),
             'baseint': measure_data.get('baseint', ''),
             'database': measure_data.get('db', ''),
-            'creator': measure_data.get('creator', ''),
             'clearint': measure_data.get('clearint', ''),
             'loadint': measure_data.get('loadint', ''),
             'defagg': measure_data.get('defagg', ''),

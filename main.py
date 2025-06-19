@@ -51,39 +51,67 @@ def combine_excel_files(comparison: Dict, labeled_intersections: Dict) -> None:
         labeled_intersections: Labeled intersections data
     """
     try:
+        sheets_written = 0
         with pd.ExcelWriter('combined_analysis.xlsx') as writer:
             # Read and write workbook data
             if os.path.exists('output.xlsx'):
-                df_workbook = pd.read_excel('output.xlsx')
-                df_workbook.to_excel(writer, sheet_name='workbook_analysis', index=False)
-                os.remove('output.xlsx')
+                try:
+                    workbook_excel = pd.ExcelFile('output.xlsx')
+                    for sheet_name in workbook_excel.sheet_names:
+                        df_workbook = pd.read_excel('output.xlsx', sheet_name=sheet_name)
+                        if not df_workbook.empty:
+                            df_workbook.to_excel(writer, sheet_name=f'workbook_{sheet_name.lower()}', index=False)
+                            sheets_written += 1
+                    os.remove('output.xlsx')
+                except Exception as e:
+                    logging.warning(f"Skipping output.xlsx due to error: {e}")
             
             # Read and write measures data
             if os.path.exists('measures_with_mismatched_dimensions.xlsx'):
-                df_measures = pd.read_excel('measures_with_mismatched_dimensions.xlsx')
-                df_measures.to_excel(writer, sheet_name='measures_analysis', index=False)
-                os.remove('measures_with_mismatched_dimensions.xlsx')
+                try:
+                    df_measures = pd.read_excel('measures_with_mismatched_dimensions.xlsx')
+                    if not df_measures.empty:
+                        df_measures.to_excel(writer, sheet_name='measures_analysis', index=False)
+                        sheets_written += 1
+                    os.remove('measures_with_mismatched_dimensions.xlsx')
+                except Exception as e:
+                    logging.warning(f"Skipping measures_with_mismatched_dimensions.xlsx due to error: {e}")
             
             # Read and write rules data
             if os.path.exists('invalid_rules.xlsx'):
-                df_rules = pd.read_excel('invalid_rules.xlsx')
-                df_rules.to_excel(writer, sheet_name='rules_analysis', index=False)
-                os.remove('invalid_rules.xlsx')
+                try:
+                    df_rules = pd.read_excel('invalid_rules.xlsx')
+                    if not df_rules.empty:
+                        df_rules.to_excel(writer, sheet_name='rules_analysis', index=False)
+                        sheets_written += 1
+                    os.remove('invalid_rules.xlsx')
+                except Exception as e:
+                    logging.warning(f"Skipping invalid_rules.xlsx due to error: {e}")
             
             # Read and write detailed hierarchy analysis from hierarchy_paths.py
             if os.path.exists('hierarchy_analysis.xlsx'):
-                # Read all sheets from hierarchy_analysis.xlsx
-                hierarchy_excel = pd.ExcelFile('hierarchy_analysis.xlsx')
-                for sheet_name in hierarchy_excel.sheet_names:
-                    df_hier = pd.read_excel('hierarchy_analysis.xlsx', sheet_name=sheet_name)
-                    df_hier.to_excel(writer, sheet_name=f'hierarchy_{sheet_name.lower()}', index=False)
-                os.remove('hierarchy_analysis.xlsx')
+                try:
+                    hierarchy_excel = pd.ExcelFile('hierarchy_analysis.xlsx')
+                    for sheet_name in hierarchy_excel.sheet_names:
+                        df_hier = pd.read_excel('hierarchy_analysis.xlsx', sheet_name=sheet_name)
+                        if not df_hier.empty:
+                            df_hier.to_excel(writer, sheet_name=f'hierarchy_{sheet_name.lower()}', index=False)
+                            sheets_written += 1
+                    os.remove('hierarchy_analysis.xlsx')
+                except Exception as e:
+                    logging.warning(f"Skipping hierarchy_analysis.xlsx due to error: {e}")
             
-            # Write labeled intersections
-            df_labeled = pd.DataFrame(list(labeled_intersections.items()), 
-                                    columns=['Labeled Intersection', 'Value'])
-            df_labeled.to_excel(writer, sheet_name='labeled_intersections', index=False)
+            # Write labeled intersections if there is anything to write
+            if labeled_intersections and len(labeled_intersections) > 0:
+                df_labeled = pd.DataFrame(list(labeled_intersections.items()), 
+                                        columns=['Labeled Intersection', 'Value'])
+                if not df_labeled.empty:
+                    df_labeled.to_excel(writer, sheet_name='labeled_intersections', index=False)
+                    sheets_written += 1
             
+            if sheets_written == 0:
+                logging.info("No analysis results to write. No Excel file created.")
+                return
         logging.info("Successfully created combined_analysis.xlsx")
     except Exception as e:
         logging.error(f"Error combining Excel files: {e}")

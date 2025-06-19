@@ -36,10 +36,11 @@ def check_mismatched_dimensions(formula: str, mismatched_dims: Dict[str, Dict[st
         Comma-separated string of found dimensions or None
     """
     found_dims = []
+    formula_lower = formula.lower()
     for hier_name, dims in mismatched_dims.items():
         for dim in dims['file2_only']:
-            # Look for dimension in square brackets format
-            if f"[{dim}]" in formula or f"[{dim.lower()}]" in formula:
+            # Only look for [dim] (case-insensitive)
+            if f"[{dim.lower()}]" in formula_lower:
                 found_dims.append(f"{dim} (from {hier_name})")
     return ', '.join(found_dims) if found_dims else None
 
