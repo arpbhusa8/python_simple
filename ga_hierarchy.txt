@@ -1,0 +1,3 @@
+CLND: day,week,mnth,qrtr,half,year
+PROD: sku,skup,skug,scls,clss,dept,pgrp,dvsn,cmpp
+LOC: stor,dstr,regn,chnl,chan,comp 
